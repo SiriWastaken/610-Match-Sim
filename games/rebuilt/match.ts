@@ -31,6 +31,7 @@ export const createMatchState = (): MatchState => ({
   blueHubActive: true,
   redRp: 0,
   blueRp: 0,
+  robotScores: { R1: 0, R2: 0, R3: 0, B1: 0, B2: 0, B3: 0 },
 });
 
 export const advanceMatchState = (match: MatchState, elapsed: number): MatchState => {

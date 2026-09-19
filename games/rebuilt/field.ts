@@ -93,6 +93,11 @@ export const fieldGeometry: FieldGeometry = {
   },
 };
 
+export const solidFieldObstacles: Rect[] = (['red', 'blue'] as const).flatMap((alliance) => {
+  const data = fieldGeometry.alliances[alliance];
+  return [data.hub, ...data.bumps, ...data.trenches, data.tower];
+});
+
 export const getFieldRect = (): Rect => ({
   x: 0,
   y: 0,
@@ -126,3 +131,8 @@ export const getAllianceStartPosition = (alliance: Alliance): Vector2 => ({
 });
 
 export const getScoringZone = (alliance: Alliance): Rect => fieldGeometry.alliances[alliance].hub;
+
+/** Solid 2D footprints used by robot and FUEL collision handling. */
+export const getSolidFieldObstacles = (): Rect[] => (
+  solidFieldObstacles
+);

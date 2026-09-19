@@ -100,6 +100,9 @@ const parseMessage = (value: unknown): ClientMessage | null => {
   if (message.type === ClientMessageType.START_MATCH) {
     return { type: ClientMessageType.START_MATCH, clientId: typeof message.clientId === 'string' ? message.clientId : '' };
   }
+  if (message.type === ClientMessageType.RESET_MATCH) {
+    return { type: ClientMessageType.RESET_MATCH, clientId: typeof message.clientId === 'string' ? message.clientId : '' };
+  }
   if (message.type === ClientMessageType.LEAVE) {
     return { type: ClientMessageType.LEAVE, clientId: typeof message.clientId === 'string' ? message.clientId : '' };
   }
@@ -154,7 +157,7 @@ webSocketServer.on('connection', (socket) => {
         ? requested
         : state.robots.find((robot) => ![...assignments.values()].includes(robot.id))?.id;
       if (!assigned) {
-        sendError(socket, 'No controllable robot is available');
+        send(socket, { type: ServerMessageType.JOIN_CONFIRMED, robotId: null, initialState: state });
         return;
       }
       assignments.set(socket, assigned);
@@ -223,6 +226,33 @@ webSocketServer.on('connection', (socket) => {
       return;
     }
 
+    if (message.type === ClientMessageType.RESET_MATCH) {
+      if (!assignments.has(socket)) {
+        sendError(socket, 'Only an assigned player can reset the match');
+        return;
+      }
+      const freshState = createInitialState();
+      const previousSlots = new Map(
+        state.match.lobby.slots
+          .filter((slot) => slot.claimedBy)
+          .map((slot) => [slot.id, { claimedBy: slot.claimedBy, initials: slot.initials }]),
+      );
+      freshState.match.lobby.slots.forEach((slot) => {
+        const previous = previousSlots.get(slot.id);
+        if (previous) {
+          slot.claimedBy = previous.claimedBy;
+          slot.initials = previous.initials;
+        }
+      });
+      Object.assign(state, freshState);
+      assignments.forEach((_robotId, assignedSocket) => {
+        const assignedRobot = assignments.get(assignedSocket);
+        if (assignedRobot) inputs.set(assignedRobot, defaultInput());
+      });
+      broadcastState();
+      return;
+    }
+
     if (message.type === ClientMessageType.LEAVE) {
       releaseAssignment(socket);
       broadcastState();
@@ -256,6 +286,7 @@ setInterval(() => {
   }
   const nextState = updateState(state, fixedDelta, inputs);
   state.matchTime = nextState.matchTime;
+  state.isRunning = nextState.isRunning;
   state.robots = nextState.robots;
   state.gamePieces = nextState.gamePieces;
   state.match = nextState.match;

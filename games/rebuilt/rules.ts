@@ -11,13 +11,8 @@
  * - No penalties in v1 (explicitly out of scope per TASK.md)
  */
 
-import { 
-  SimulationState, 
-  RobotState, 
-  GamePieceState, 
-  FieldState 
-} from '../../simulator/simulation/simulationState';
-import { Vector2, distance } from '../../simulator/physics/vectors';
+import { SimulationState } from '../../simulator/simulation/simulationState';
+import { Vector2 } from '../../simulator/physics/vectors';
 import { getPieceCarrier, isValidScore, FIELD_WIDTH, FIELD_HEIGHT } from './index';
 
 // REBUILT scoring zones
@@ -49,7 +44,7 @@ export const calculateScore = (
   pieceId: string
 ): ScoringResult => {
   // Check if the piece is being carried by this robot
-  const carrier = getPieceCarrier(pieceId);
+  const carrier = getPieceCarrier(state, pieceId);
   if (carrier !== robotId) {
     return {
       success: false,
@@ -82,16 +77,6 @@ export const calculateScore = (
   }
 
   // Determine scoring zone based on robot position
-  const distToLowGoal = distance(
-    robot.position,
-    { x: 1, y: 27.8 } // Approximate low goal position
-  );
-
-  const distToHighGoal = distance(
-    robot.position,
-    { x: 12.41, y: 1 } // Approximate high goal position
-  );
-
   // Simple zone determination - in full implementation would check
   // exact position relative to goal structures
   let zone: ScoringZone = ScoringZone.NEUTRAL_ZONE;

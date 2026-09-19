@@ -14,9 +14,10 @@ import {
   RobotInput 
 } from '../../simulator/simulation/simulationState';
 import { updateRobotPhysics } from '../../simulator/simulation/simulationTick';
+import { feetPerSecondToMetersPerSecond } from '../../simulator/stats';
 import { createRobotState, team610RobotDefinition, allianceRobotDefinition } from '../../simulator/robotClasses';
-import { FIELD_HEIGHT, FIELD_WIDTH, CENTER_X, CENTER_Y, fieldGeometry, getFieldState } from './field';
-import { createFuelStaging, FUEL_RADIUS, resolveFuelPhysics } from './fuel';
+import { FIELD_HEIGHT, FIELD_WIDTH, CENTER_X, fieldGeometry, getFieldState, getSolidFieldObstacles } from './field';
+import { createFuelStaging, resolveFuelPhysics } from './fuel';
 import { advanceMatchState, createMatchState } from './match';
 
 // REBUILT field dimensions (from 2026 FRC game manual)
@@ -32,6 +33,7 @@ export const GAME_PIECE_HEIGHT = 0.3;
 // Typical FRC robot size ~ 28" x 36" (0.711m x 0.914m)
 export const ROBOT_WIDTH = 0.711;
 export const ROBOT_LENGTH = 0.914;
+export const PRELOAD_LIMIT = 8;
 
 // Scoring positions (approximate from game manual)
 export const HIGH_GOAL_POSITION = {
@@ -64,7 +66,7 @@ export interface FRCGameInterface {
   updateState(state: SimulationState, dt: number, inputs: Map<string, RobotInput>): SimulationState;
 
   /** Get which robot (if any) is carrying a game piece */
-  getPieceCarrier(pieceId: string): string | null;
+  getPieceCarrier(state: SimulationState, pieceId: string): string | null;
 
   /** Check if a scoring action is valid */
   isValidScore(state: SimulationState, robotId: string, pieceId: string): boolean;
@@ -80,6 +82,8 @@ export interface RobotStats {
   braking: number;
   friction: number;
   turnRate: number;
+  drivetrainSpeedFtPerSec: number;
+  shootDriveSpeedPercent: number;
 }
 
 /** REBUILT-specific robot stats */
@@ -87,11 +91,13 @@ export const REBUILT_ROBOT_STATS: RobotStats = {
   mass: 150,  // kg
   width: ROBOT_WIDTH,
   length: ROBOT_LENGTH,
-  maxSpeed: 4.0,  // m/s
+  maxSpeed: 4.0,  // m/s, derived from 13.1234 ft/s
   acceleration: 3.0,  // m/s²
   braking: 5.0,  // m/s² (deceleration rate)
   friction: 0.02,
   turnRate: 2.0,  // radians per second
+  drivetrainSpeedFtPerSec: 13.1234,
+  shootDriveSpeedPercent: 50,
 };
 
 /**
@@ -107,19 +113,21 @@ export const getFieldBounds = (): FieldState => ({
  * All REBUILT robots have the same base stats but can be modified.
  */
 export const getRobotStats = (robotId: string): RobotStats => {
+  void robotId;
   // In a full implementation, different robots could have different stats
   // based on their configuration/team number
-  return { ...REBUILT_ROBOT_STATS };
+  return {
+    ...REBUILT_ROBOT_STATS,
+    maxSpeed: feetPerSecondToMetersPerSecond(REBUILT_ROBOT_STATS.drivetrainSpeedFtPerSec),
+  };
 };
 
 /**
  * Create initial simulation state for a REBUILT match.
  * Sets up robots, game pieces, and initial positions.
  */
-export const createInitialState = (): SimulationState => ({
-  matchTime: 0,
-  isRunning: false,
-  robots: [
+export const createInitialState = (): SimulationState => {
+  const robots = [
     ...(['R1', 'R2', 'R3'] as const).map((id, index) => createRobotState(
       { ...team610RobotDefinition, id, team: '610' },
       { x: 1.4, y: 1.8 + index * 2.2 },
@@ -128,11 +136,16 @@ export const createInitialState = (): SimulationState => ({
       { ...allianceRobotDefinition, id, team: 'alliance' },
       { x: FIELD_WIDTH - 1.4, y: 1.8 + index * 2.2 },
     )),
-  ],
-  gamePieces: createFuelStaging(600),
-  field: getFieldBounds(),
-  match: createMatchState(),
-});
+  ];
+  return {
+    matchTime: 0,
+    isRunning: false,
+    robots: robots.map((robot) => ({ ...robot, carriedCount: PRELOAD_LIMIT })),
+    gamePieces: createFuelStaging(600, PRELOAD_LIMIT, robots.map((robot) => robot.id)),
+    field: getFieldBounds(),
+    match: createMatchState(),
+  };
+};
 
 /**
  * Update the REBUILT simulation state by one tick.
@@ -143,7 +156,7 @@ export const updateState = (
   dt: number,
   inputs: Map<string, RobotInput>
 ): SimulationState => {
-  if (!state.match.started) return state;
+  if (!state.match.started || !state.isRunning) return state;
   // Update physics for all robots
   const newRobots = state.robots.map(robot => {
     const input = inputs.get(robot.id) || defaultInput;
@@ -152,9 +165,11 @@ export const updateState = (
   });
 
   resolveRobotCollisions(newRobots);
+  resolveRobotFieldCollisions(newRobots);
   const resetRobotIds = new Set(
     state.robots.filter((robot) => inputs.get(robot.id)?.reset).map((robot) => robot.id),
   );
+  const match = advanceMatchState(state.match, state.matchTime + dt);
 
   const newGamePieces: GamePieceState[] = state.gamePieces.map((piece): GamePieceState => {
     if (piece.carrier && resetRobotIds.has(piece.carrier)) {
@@ -178,6 +193,18 @@ export const updateState = (
             y: piece.position.y + piece.velocity.y * dt,
           },
         };
+      }
+      const target = piece.target;
+      const alliance = target.x < CENTER_X ? 'red' : 'blue';
+      if (alliance === 'red' && match.redHubActive) match.redScore += 1;
+      if (alliance === 'blue' && match.blueHubActive) match.blueScore += 1;
+      if ((alliance === 'red' && match.redHubActive) || (alliance === 'blue' && match.blueHubActive)) {
+        const scorer = piece.scoringRobotId;
+        if (scorer) match.robotScores[scorer] = (match.robotScores[scorer] ?? 0) + 1;
+      }
+      if (match.phase === 'AUTO') {
+        if (alliance === 'red') match.redAutoFuel += 1;
+        else match.blueAutoFuel += 1;
       }
       return {
         ...piece,
@@ -210,8 +237,6 @@ export const updateState = (
     return piece;
   });
   const simulatedGamePieces = resolveFuelPhysics(newGamePieces, state.field, newRobots, dt);
-  const match = advanceMatchState(state.match, state.matchTime + dt);
-
   for (const robot of newRobots) {
     const input = inputs.get(robot.id) || defaultInput;
     if (input.shoot) {
@@ -227,12 +252,14 @@ export const updateState = (
         carried.source = 'robot';
         carried.carrier = null;
         carried.target = hub;
+        carried.scoringRobotId = robot.id;
         carried.flightSecondsRemaining = distance / speed;
         carried.position = { ...robot.position };
-        carried.velocity = { x: (dx / Math.max(distance, 0.001)) * speed, y: (dy / Math.max(distance, 0.001)) * speed };
+        carried.velocity = {
+          x: robot.velocity.x + (dx / Math.max(distance, 0.001)) * speed,
+          y: robot.velocity.y + (dy / Math.max(distance, 0.001)) * speed,
+        };
         robot.carriedCount = Math.max(0, robot.carriedCount - 1);
-        if (alliance === 'red' && match.redHubActive) match.redScore += 1;
-        if (alliance === 'blue' && match.blueHubActive) match.blueScore += 1;
       }
     }
     if (input.outtake) {
@@ -267,7 +294,8 @@ export const updateState = (
     robots: newRobots,
     gamePieces: simulatedGamePieces,
     matchTime: state.matchTime + dt,
-    match,
+    match: match.phase === 'COMPLETE' ? { ...match, started: true } : match,
+    isRunning: match.phase !== 'COMPLETE',
   };
 };
 
@@ -321,13 +349,15 @@ const resolveRobotCollisions = (robots: RobotState[]) => {
       const second = robots[secondIndex];
       const dx = second.position.x - first.position.x;
       const dy = second.position.y - first.position.y;
-      const distance = Math.hypot(dx, dy) || 0.001;
+      const distance = Math.hypot(dx, dy);
       const firstStats = getRobotStats(first.id);
       const secondStats = getRobotStats(second.id);
-      const minimumDistance = Math.max(firstStats.width, firstStats.length, secondStats.width, secondStats.length) * 0.72;
+      const firstRadius = Math.hypot(firstStats.width, firstStats.length) / 2;
+      const secondRadius = Math.hypot(secondStats.width, secondStats.length) / 2;
+      const minimumDistance = firstRadius + secondRadius;
       if (distance >= minimumDistance) continue;
-      const normalX = dx / distance;
-      const normalY = dy / distance;
+      const normalX = distance > 0.000001 ? dx / distance : 1;
+      const normalY = distance > 0.000001 ? dy / distance : 0;
       const correction = (minimumDistance - distance) / 2;
       first.position.x -= normalX * correction;
       first.position.y -= normalY * correction;
@@ -343,15 +373,63 @@ const resolveRobotCollisions = (robots: RobotState[]) => {
       }
     }
   }
+  for (const robot of robots) {
+    const stats = getRobotStats(robot.id);
+    const cosHeading = Math.abs(Math.cos(robot.heading));
+    const sinHeading = Math.abs(Math.sin(robot.heading));
+    const halfWidth = (cosHeading * stats.width + sinHeading * stats.length) / 2;
+    const halfLength = (sinHeading * stats.width + cosHeading * stats.length) / 2;
+    const clampedX = Math.max(halfWidth, Math.min(FIELD_WIDTH - halfWidth, robot.position.x));
+    const clampedY = Math.max(halfLength, Math.min(FIELD_HEIGHT - halfLength, robot.position.y));
+    if (clampedX !== robot.position.x) robot.velocity.x = 0;
+    if (clampedY !== robot.position.y) robot.velocity.y = 0;
+    robot.position.x = clampedX;
+    robot.position.y = clampedY;
+  }
+};
+
+const resolveRobotFieldCollisions = (robots: RobotState[]) => {
+  for (const robot of robots) {
+    const stats = getRobotStats(robot.id);
+    const radius = Math.hypot(stats.width, stats.length) / 2;
+    for (const obstacle of getSolidFieldObstacles()) {
+      const closestX = Math.max(obstacle.x, Math.min(robot.position.x, obstacle.x + obstacle.width));
+      const closestY = Math.max(obstacle.y, Math.min(robot.position.y, obstacle.y + obstacle.height));
+      const dx = robot.position.x - closestX;
+      const dy = robot.position.y - closestY;
+      const distance = Math.hypot(dx, dy);
+      if (distance >= radius) continue;
+      if (distance > 0.000001) {
+        const nx = dx / distance;
+        const ny = dy / distance;
+        const correction = radius - distance;
+        robot.position.x += nx * correction;
+        robot.position.y += ny * correction;
+        const normalVelocity = robot.velocity.x * nx + robot.velocity.y * ny;
+        if (normalVelocity < 0) {
+          robot.velocity.x -= nx * normalVelocity;
+          robot.velocity.y -= ny * normalVelocity;
+        }
+        continue;
+      }
+      const distances = [
+        { distance: robot.position.x - obstacle.x, nx: -1, ny: 0 },
+        { distance: obstacle.x + obstacle.width - robot.position.x, nx: 1, ny: 0 },
+        { distance: robot.position.y - obstacle.y, nx: 0, ny: -1 },
+        { distance: obstacle.y + obstacle.height - robot.position.y, nx: 0, ny: 1 },
+      ];
+      const nearest = distances.reduce((best, candidate) => candidate.distance < best.distance ? candidate : best);
+      robot.position.x += nearest.nx * (nearest.distance + radius);
+      robot.position.y += nearest.ny * (nearest.distance + radius);
+    }
+  }
 };
 
 /**
  * Get which robot is carrying a game piece.
  */
-export const getPieceCarrier = (pieceId: string): string | null => {
-  // Look through robots to find which one carries this piece
-  // This is simplified - real implementation would check piece carrier state
-  return null;
+export const getPieceCarrier = (state: SimulationState, pieceId: string): string | null => {
+  return state.gamePieces.find((piece) => piece.id === pieceId)?.carrier ?? null;
 };
 
 /**

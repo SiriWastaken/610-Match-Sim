@@ -1,5 +1,5 @@
 import { FieldState, GamePieceState, RobotState } from '../../simulator/simulation/simulationState';
-import { CENTER_X, CENTER_Y, fieldGeometry, FIELD_HEIGHT } from './field';
+import { CENTER_X, CENTER_Y, fieldGeometry, getSolidFieldObstacles } from './field';
 
 export const FUEL_DIAMETER = 0.15;
 export const FUEL_RADIUS = FUEL_DIAMETER / 2;
@@ -9,7 +9,11 @@ export const BALL_RESTITUTION = 0.4;
 export const WALL_RESTITUTION = 0.3;
 export const SPATIAL_CELL_SIZE = FUEL_DIAMETER * 2;
 
-export const createFuelStaging = (total: 504 | 600 = 600, preloadedPerRobot = 0): GamePieceState[] => {
+export const createFuelStaging = (
+  total: 504 | 600 = 600,
+  preloadedPerRobot = 0,
+  preloadRobotIds: string[] = [],
+): GamePieceState[] => {
   const pieces: GamePieceState[] = [];
   const add = (index: number, position: { x: number; y: number }, state: GamePieceState['state'], source: GamePieceState['source']) => {
     pieces.push({
@@ -38,7 +42,7 @@ export const createFuelStaging = (total: 504 | 600 = 600, preloadedPerRobot = 0)
       }, 'held', 'outpost');
     }
   }
-  const neutralCount = total - pieces.length - preloadedPerRobot * 2;
+  const neutralCount = total - pieces.length - preloadedPerRobot * preloadRobotIds.length;
   for (let slot = 0; slot < neutralCount; slot += 1) {
     const column = slot % 30;
     const row = Math.floor(slot / 30);
@@ -48,6 +52,12 @@ export const createFuelStaging = (total: 504 | 600 = 600, preloadedPerRobot = 0)
       x,
       y: CENTER_Y - Math.min(0.855, (Math.ceil(neutralCount / 30) - 1) * 0.045) + row * 0.09,
     }, 'free', 'neutral');
+  }
+  for (const robotId of preloadRobotIds) {
+    for (let slot = 0; slot < preloadedPerRobot; slot += 1) {
+      add(index++, { x: 0, y: 0 }, 'carried', 'robot');
+      pieces[pieces.length - 1].carrier = robotId;
+    }
   }
   return pieces;
 };
@@ -116,6 +126,7 @@ export const resolveFuelPhysics = (
       piece.position.y = field.bottom - piece.radius;
       piece.velocity.y = -Math.abs(piece.velocity.y) * WALL_RESTITUTION;
     }
+    for (const obstacle of getSolidFieldObstacles()) pushFuelFromObstacle(piece, obstacle);
     for (const robot of robots) pushFuelFromRobot(piece, robot);
   }
 
@@ -137,14 +148,45 @@ export const resolveFuelPhysics = (
   return next;
 };
 
+const pushFuelFromObstacle = (piece: GamePieceState, obstacle: { x: number; y: number; width: number; height: number }) => {
+  const closestX = Math.max(obstacle.x, Math.min(piece.position.x, obstacle.x + obstacle.width));
+  const closestY = Math.max(obstacle.y, Math.min(piece.position.y, obstacle.y + obstacle.height));
+  const dx = piece.position.x - closestX;
+  const dy = piece.position.y - closestY;
+  const distance = Math.hypot(dx, dy);
+  if (distance >= piece.radius) return;
+  if (distance > 0.000001) {
+    const nx = dx / distance;
+    const ny = dy / distance;
+    const correction = piece.radius - distance;
+    piece.position.x += nx * correction;
+    piece.position.y += ny * correction;
+    const normalVelocity = piece.velocity.x * nx + piece.velocity.y * ny;
+    if (normalVelocity < 0) {
+      piece.velocity.x -= nx * normalVelocity;
+      piece.velocity.y -= ny * normalVelocity;
+    }
+    return;
+  }
+  const distances = [
+    { distance: piece.position.x - obstacle.x, nx: -1, ny: 0 },
+    { distance: obstacle.x + obstacle.width - piece.position.x, nx: 1, ny: 0 },
+    { distance: piece.position.y - obstacle.y, nx: 0, ny: -1 },
+    { distance: obstacle.y + obstacle.height - piece.position.y, nx: 0, ny: 1 },
+  ];
+  const nearest = distances.reduce((best, candidate) => candidate.distance < best.distance ? candidate : best);
+  piece.position.x += nearest.nx * (nearest.distance + piece.radius);
+  piece.position.y += nearest.ny * (nearest.distance + piece.radius);
+};
+
 const resolveBallPair = (first: GamePieceState, second: GamePieceState) => {
   const dx = second.position.x - first.position.x;
   const dy = second.position.y - first.position.y;
-  const distance = Math.hypot(dx, dy) || 0.001;
+  const distance = Math.hypot(dx, dy);
   const minimum = first.radius + second.radius;
   if (distance >= minimum) return;
-  const nx = dx / distance;
-  const ny = dy / distance;
+  const nx = distance > 0.000001 ? dx / distance : 1;
+  const ny = distance > 0.000001 ? dy / distance : 0;
   const correction = (minimum - distance) / 2;
   first.position.x -= nx * correction;
   first.position.y -= ny * correction;
@@ -162,12 +204,12 @@ const resolveBallPair = (first: GamePieceState, second: GamePieceState) => {
 const pushFuelFromRobot = (piece: GamePieceState, robot: RobotState) => {
   const dx = piece.position.x - robot.position.x;
   const dy = piece.position.y - robot.position.y;
-  const distance = Math.hypot(dx, dy) || 0.001;
+  const distance = Math.hypot(dx, dy);
   const robotRadius = 0.46;
   const minimum = robotRadius + piece.radius;
   if (distance >= minimum) return;
-  const nx = dx / distance;
-  const ny = dy / distance;
+  const nx = distance > 0.000001 ? dx / distance : 1;
+  const ny = distance > 0.000001 ? dy / distance : 0;
   piece.position.x = robot.position.x + nx * minimum;
   piece.position.y = robot.position.y + ny * minimum;
   const intoRobot = piece.velocity.x * nx + piece.velocity.y * ny;

@@ -68,7 +68,8 @@ export const createRobotState = (
   heading: definition.startingHeading || 0,
   angularVelocity: 0,
   team: definition.team,
-  capacity: 1,
+  capacity: 600,
+  preloadLimit: 8,
   carriedCount: 0,
   controlledBy: 'human', // Will be overridden by network input
 });
@@ -89,6 +90,8 @@ export const team610RobotDefinition: RobotDefinition = {
     braking: 5.0,
     friction: 0.02,
     turnRate: 2.0,
+    drivetrainSpeedFtPerSec: 13.1234,
+    shootDriveSpeedPercent: 50,
   },
   startingPosition: { x: 2, y: 5 }, // Left side of field
   startingHeading: Math.PI / 2, // Facing downward (into field)
@@ -111,6 +114,8 @@ export const allianceRobotDefinition: RobotDefinition = {
     braking: 5.0,
     friction: 0.02,
     turnRate: 2.0,
+    drivetrainSpeedFtPerSec: 13.1234,
+    shootDriveSpeedPercent: 50,
   },
   startingPosition: { x: 11.41, y: 5 }, // Right side of field
   startingHeading: -Math.PI / 2, // Facing upward (into field)

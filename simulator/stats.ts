@@ -7,15 +7,25 @@ export interface RobotStats {
   braking: number;
   friction: number;
   turnRate: number;
+  drivetrainSpeedFtPerSec: number;
+  shootDriveSpeedPercent: number;
 }
+
+export const FEET_TO_METERS = 0.3048;
+
+export const feetPerSecondToMetersPerSecond = (feetPerSecond: number): number => (
+  feetPerSecond * FEET_TO_METERS
+);
 
 export const defaultRobotStats: RobotStats = {
   mass: 150,
   width: 0.711,
   length: 0.915,
-  maxSpeed: 4,
+  maxSpeed: feetPerSecondToMetersPerSecond(13.1234),
   acceleration: 3,
   braking: 5,
   friction: 0.02,
   turnRate: 2,
+  drivetrainSpeedFtPerSec: 13.1234,
+  shootDriveSpeedPercent: 50,
 };

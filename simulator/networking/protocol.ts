@@ -6,7 +6,7 @@
  * broadcasts the authoritative state.
  */
 
-import { SimulationState, RobotState, GamePieceState, RobotInput } from '../simulation/simulationState';
+import { SimulationState, RobotInput } from '../simulation/simulationState';
 
 /** Message types sent from client to server */
 export enum ClientMessageType {
@@ -18,6 +18,7 @@ export enum ClientMessageType {
   LOBBY_CLAIM = 'lobbyClaim',
   LOBBY_READY = 'lobbyReady',
   START_MATCH = 'startMatch',
+  RESET_MATCH = 'resetMatch',
 }
 
 /** Input message from a client */
@@ -68,7 +69,12 @@ export interface StartMatchMessage {
   clientId: string;
 }
 
-export type ClientMessage = InputMessage | JoinMessage | LeaveMessage | LobbyClaimMessage | LobbyReadyMessage | StartMatchMessage;
+export interface ResetMatchMessage {
+  type: ClientMessageType.RESET_MATCH;
+  clientId: string;
+}
+
+export type ClientMessage = InputMessage | JoinMessage | LeaveMessage | LobbyClaimMessage | LobbyReadyMessage | StartMatchMessage | ResetMatchMessage;
 
 /** Server message types */
 export enum ServerMessageType {
@@ -97,7 +103,7 @@ export interface ErrorMessage {
 export interface JoinConfirmedMessage {
   type: ServerMessageType.JOIN_CONFIRMED;
   /** Assigned robot ID */
-  robotId: string;
+  robotId: string | null;
   /** Initial simulation state */
   initialState: SimulationState;
 }

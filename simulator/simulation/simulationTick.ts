@@ -5,8 +5,8 @@
  * It is kept separate from rendering and networking.
  */
 
-import { Vector2, RobotState, GamePieceState, SimulationState, RobotInput, FieldState } from './simulationState';
-import { RobotStats, defaultRobotStats } from '../stats';
+import { Vector2, RobotState, SimulationState, RobotInput, FieldState } from './simulationState';
+import { RobotStats, defaultRobotStats, feetPerSecondToMetersPerSecond } from '../stats';
 
 /**
  * Apply physics to a robot for one timestep.
@@ -36,38 +36,32 @@ export const updateRobotPhysics = (
 
   const driveX = input.driveX ?? 0;
   const driveY = input.driveY ?? input.thrust;
+  const driveMagnitude = Math.hypot(driveX, driveY);
+  const driveScale = driveMagnitude > 1 ? 1 / driveMagnitude : 1;
   const cosH = Math.cos(newHeading);
   const sinH = Math.sin(newHeading);
 
-  // Convert local swerve axes into world acceleration.
-  const forwardForce = driveY * stats.acceleration;
-  const strafeForce = driveX * stats.acceleration;
-  const accelerationVector = {
-    x: cosH * forwardForce - sinH * strafeForce,
-    y: sinH * forwardForce + cosH * strafeForce,
+  // Swerve drive targets a chassis velocity while acceleration and braking limit
+  // how quickly the robot can reach that target.
+  const shootSpeedPercent = Math.max(0, Math.min(100, stats.shootDriveSpeedPercent));
+  const configuredMaxSpeed = stats.drivetrainSpeedFtPerSec > 0
+    ? feetPerSecondToMetersPerSecond(stats.drivetrainSpeedFtPerSec)
+    : stats.maxSpeed;
+  const driveSpeed = input.shoot
+    ? configuredMaxSpeed * shootSpeedPercent / 100
+    : configuredMaxSpeed;
+  const targetForwardVelocity = driveY * driveScale * driveSpeed;
+  const targetStrafeVelocity = driveX * driveScale * driveSpeed;
+  const targetVelocity = {
+    x: cosH * targetForwardVelocity - sinH * targetStrafeVelocity,
+    y: sinH * targetForwardVelocity + cosH * targetStrafeVelocity,
   };
-
-  // Apply friction/damping
-  const friction = driveX === 0 && driveY === 0 ? stats.braking : stats.friction;
-  const velocityAfterFriction = {
-    x: velocity.x * Math.max(0, 1 - friction * dt),
-    y: velocity.y * Math.max(0, 1 - friction * dt),
-  };
-
-  // Add acceleration
-  const newVelocity = {
-    x: velocityAfterFriction.x + accelerationVector.x * dt,
-    y: velocityAfterFriction.y + accelerationVector.y * dt,
-  };
-
-  // Apply speed limit
-  const speed = Math.sqrt(newVelocity.x * newVelocity.x + newVelocity.y * newVelocity.y);
-  const maxSpeed = stats.maxSpeed;
-  const clampedSpeed = speed > maxSpeed ? (maxSpeed / speed) : 1;
-  const finalVelocity = {
-    x: newVelocity.x * clampedSpeed,
-    y: newVelocity.y * clampedSpeed,
-  };
+  const hasDriveInput = driveMagnitude > 0.001;
+  const finalVelocity = approachVector(
+    velocity,
+    targetVelocity,
+    (hasDriveInput ? stats.acceleration : stats.braking) * dt,
+  );
 
   // Update position
   const newPosition = {
@@ -86,6 +80,18 @@ export const updateRobotPhysics = (
     velocity: finalVelocity,
     heading: newHeading,
     angularVelocity: newAngularVelocity,
+  };
+};
+
+const approachVector = (current: Vector2, target: Vector2, maxDelta: number): Vector2 => {
+  const deltaX = target.x - current.x;
+  const deltaY = target.y - current.y;
+  const distance = Math.hypot(deltaX, deltaY);
+  if (distance <= maxDelta || distance === 0) return { ...target };
+  const scale = maxDelta / distance;
+  return {
+    x: current.x + deltaX * scale,
+    y: current.y + deltaY * scale,
   };
 };
 
@@ -128,8 +134,6 @@ export const simulationTick = (
   robots: { [key: string]: RobotStats }
 ): SimulationState => {
   const newRobots: RobotState[] = [];
-  const newGamePieces: GamePieceState[] = [...state.gamePieces];
-
   // Update each robot
   state.robots.forEach(robot => {
     const input = { driveX: 0, driveY: 0, thrust: 0, turn: 0, intake: true, outtake: false, mechanism: false };

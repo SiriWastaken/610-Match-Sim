@@ -22,6 +22,8 @@ export interface RobotState {
   team: string;
   /** Maximum number of game pieces this robot can carry. */
   capacity: number;
+  /** Official pre-match preload allowance; not an in-match carrying limit. */
+  preloadLimit?: number;
   /** Current number of carried pieces. */
   carriedCount: number;
   /** Whether the robot is controlled by a human player or AI */
@@ -43,6 +45,7 @@ export interface GamePieceState {
   flightSecondsRemaining?: number;
   recycleSecondsRemaining?: number;
   target?: Vector2;
+  scoringRobotId?: RobotId;
 }
 
 /** Complete simulation state snapshot */
@@ -76,6 +79,7 @@ export interface MatchState {
   blueHubActive: boolean;
   redRp: number;
   blueRp: number;
+  robotScores: Record<string, number>;
 }
 
 export interface LobbySlot {

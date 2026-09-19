@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useId, useRef, useState } from 'react';
+import Image from 'next/image';
 import { render } from '@/simulator/rendering/renderer';
 import { createInitialState, updateState } from '@/games/rebuilt';
 import { RobotInput, SimulationState } from '@/simulator/simulation/simulationState';
@@ -29,7 +30,8 @@ export default function Home() {
   const [input, setInput] = useState(emptyInput);
   const [connected, setConnected] = useState(false);
   const [authoritative, setAuthoritative] = useState(false);
-  const [robotId, setRobotId] = useState('R1');
+  const [robotId, setRobotId] = useState<string | null>('R1');
+  const [networkError, setNetworkError] = useState<string | null>(null);
 
   useEffect(() => {
     const host = window.location.hostname;
@@ -38,6 +40,7 @@ export default function Home() {
     socketRef.current = socket;
     socket.onopen = () => {
       setConnected(true);
+      setNetworkError(null);
       socket.send(JSON.stringify({
         type: 'join',
         clientId,
@@ -46,14 +49,17 @@ export default function Home() {
     };
     socket.onmessage = (event) => {
       try {
-        const message = JSON.parse(event.data) as { type: string; state?: SimulationState; robotId?: string };
+        const message = JSON.parse(event.data) as { type: string; state?: SimulationState; robotId?: string | null; message?: string };
         if (message.type === ServerMessageType.STATE && message.state) {
           setAuthoritative(true);
           setState(message.state);
         }
         if (message.type === ServerMessageType.JOIN_CONFIRMED) {
           setAuthoritative(true);
-          if (message.robotId) setRobotId(message.robotId);
+          setRobotId(message.robotId ?? null);
+        }
+        if (message.type === ServerMessageType.ERROR) {
+          setNetworkError(typeof message.message === 'string' ? message.message : 'Network request failed');
         }
       } catch {
         setAuthoritative(false);
@@ -62,6 +68,8 @@ export default function Home() {
     socket.onclose = () => {
       setConnected(false);
       setAuthoritative(false);
+      setInput(emptyInput);
+      setNetworkError('Disconnected from the simulation server');
     };
     socket.onerror = () => setConnected(false);
     return () => {
@@ -72,7 +80,7 @@ export default function Home() {
 
   useEffect(() => {
     const socket = socketRef.current;
-    if (socket?.readyState !== WebSocket.OPEN || !authoritative) return;
+    if (socket?.readyState !== WebSocket.OPEN || !authoritative || !robotId) return;
     socket.send(JSON.stringify({
       type: 'input',
       clientId,
@@ -143,7 +151,7 @@ export default function Home() {
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
       if (!authoritative) {
-        setState((current) => updateState(current, dt, new Map([[robotId, input]])));
+        setState((current) => updateState(current, dt, robotId ? new Map([[robotId, input]]) : new Map()));
       }
       frame = requestAnimationFrame(tick);
     };
@@ -159,16 +167,49 @@ export default function Home() {
     render(context, state, { width: canvas.width, height: canvas.height }, fieldImageRef.current ?? undefined);
   }, [state]);
 
-  const minutes = Math.floor(state.matchTime / 60);
-  const seconds = Math.floor(state.matchTime % 60).toString().padStart(2, '0');
+  const remainingMatchTime = Math.max(0, 160 - state.matchTime);
+  const minutes = Math.floor(remainingMatchTime / 60);
+  const seconds = Math.floor(remainingMatchTime % 60).toString().padStart(2, '0');
 
   const sendLobby = (message: object) => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify(message));
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      setNetworkError(null);
+      socketRef.current.send(JSON.stringify(message));
+    } else {
+      setNetworkError('Not connected to the simulation server');
+    }
   };
+
+  const sendReset = () => sendLobby({ type: 'resetMatch', clientId });
 
   const selectedSlot = state.match.lobby.slots.find((slot) => slot.id === robotId);
   const isReady = selectedSlot?.claimedBy === clientId && selectedSlot.ready;
   const canStart = state.match.lobby.slots.some((slot) => slot.claimedBy) && state.match.lobby.slots.filter((slot) => slot.claimedBy).every((slot) => slot.ready);
+  const robotScores = state.match.robotScores ?? { R1: 0, R2: 0, R3: 0, B1: 0, B2: 0, B3: 0 };
+
+  if (state.match.phase === 'COMPLETE') {
+    return (
+      <main className="simulator-shell">
+        <header className="simulator-header">
+          <div><p className="eyebrow">TEAM 610 / 2026</p><h1>REBUILT / final results</h1></div>
+          <div className="status"><span className="live" /> MATCH COMPLETE</div>
+        </header>
+        <section className="lobby-panel">
+          <div className="lobby-heading"><div><p className="eyebrow">160 SECOND MATCH</p><h2>Final score</h2></div><span>0:00</span></div>
+          <div className="score-row"><span className="red-mark" />RED <b>{state.match.redScore}</b><em>FINAL</em></div>
+          <div className="score-row"><span className="blue-mark" />BLUE <b>{state.match.blueScore}</b><em>FINAL</em></div>
+          <div className="console-rule" />
+          <div className="lobby-grid">
+            {Object.entries(robotScores).map(([id, score]) => (
+              <div className="lobby-slot selected-slot" key={id}><strong>{id}</strong><span>{score} FUEL</span><small>{id.startsWith('R') ? 'RED' : 'BLUE'}</small></div>
+            ))}
+          </div>
+          <div className="lobby-actions"><button className="lobby-start" disabled={!robotId || !connected} onClick={sendReset}>RETURN TO LOBBY</button></div>
+          {networkError && <p className="network-error" role="alert">{networkError}</p>}
+        </section>
+      </main>
+    );
+  }
 
   if (!state.match.started) {
     return (
@@ -189,9 +230,10 @@ export default function Home() {
           <div className="lobby-actions">
             <div className="lobby-stat"><span>ROBOT CLASS</span><b>STANDARD FRC</b></div>
             <div className="lobby-stat"><span>DRIVE / ROTATION</span><b>4.0 m/s / 2.0 rad/s</b></div>
-            <div className="lobby-stat"><span>CAPACITY / HEIGHT</span><b>1 FUEL / TRENCH READY</b></div>
+            <div className="lobby-stat"><span>PRELOAD / HEIGHT</span><b>8 FUEL / TRENCH READY</b></div>
             <button className="lobby-ready" disabled={!selectedSlot || selectedSlot.claimedBy !== clientId} onClick={() => sendLobby({ type: 'lobbyReady', clientId, robotId, ready: !isReady })}>{isReady ? 'UNREADY' : 'READY UP'}</button>
             <button className="lobby-start" disabled={!canStart} onClick={() => sendLobby({ type: 'startMatch', clientId })}>START MATCH</button>
+            {networkError && <p className="network-error" role="alert">{networkError}</p>}
           </div>
         </section>
         <footer className="simulator-footer"><span>6 ROBOT SLOTS / LATE JOINERS SPECTATE</span><span>SERVER AUTHORITATIVE</span></footer>
@@ -220,13 +262,13 @@ export default function Home() {
           <div className="score-row"><span className="red-mark" />RED <b>{state.match.redScore}</b><em>{state.match.redHubActive ? 'ACTIVE' : 'INACTIVE'}</em></div>
           <div className="score-row"><span className="blue-mark" />BLUE <b>{state.match.blueScore}</b><em>{state.match.blueHubActive ? 'ACTIVE' : 'INACTIVE'}</em></div>
           <div className="console-rule" />
-          <div className="readout"><span>CONTROL</span><b>R1 / 610</b></div>
+          <div className="readout"><span>CONTROL</span><b>{robotId ? `${robotId} / 610` : 'SPECTATOR'}</b></div>
           <div className="readout"><span>PHASE LEFT</span><b>{state.match.phaseSecondsRemaining.toFixed(1)}s</b></div>
           <div className="readout"><span>LINK</span><b>{connected ? 'AUTHORITY' : 'LOCAL ONLY'}</b></div>
         </aside>
         <section className="simulator-stage" aria-label="REBUILT field preview">
           <div className="stage-topline"><span>FIELD / WORLD SPACE</span><span>16.54m x 8.07m</span></div>
-          <img className="field-image-preload" src="/FieldImage.png" alt="" ref={fieldImageRef} onLoad={() => setState((current) => ({ ...current }))} />
+          <Image className="field-image-preload" src="/FieldImage.png" alt="" width={1200} height={820} priority ref={fieldImageRef} onLoad={() => setState((current) => ({ ...current }))} />
           <canvas ref={canvasRef} width={1200} height={820} />
         </section>
       </section>
