@@ -26,9 +26,11 @@ const httpServer = createServer((_request, response) => {
 const webSocketServer = new WebSocketServer({ server: httpServer, path: '/ws' });
 
 const defaultInput = (): RobotInput => ({
+  driveX: 0,
+  driveY: 0,
   thrust: 0,
   turn: 0,
-  intake: false,
+  intake: true,
   outtake: false,
   mechanism: false,
 });
@@ -42,9 +44,11 @@ const sendError = (socket: WebSocket, message: string) => {
 };
 
 const clampInput = (input: Partial<RobotInput>): RobotInput => ({
+  driveX: clampNumber(input.driveX),
+  driveY: clampNumber(input.driveY),
   thrust: clampNumber(input.thrust),
   turn: clampNumber(input.turn),
-  intake: input.intake === true,
+  intake: true,
   outtake: input.outtake === true,
   mechanism: input.mechanism === true,
   shoot: input.shoot === true,
@@ -111,9 +115,22 @@ const broadcastState = () => {
   clients.forEach((client) => send(client, message));
 };
 
+const releaseAssignment = (socket: WebSocket) => {
+  const robotId = assignments.get(socket);
+  if (!robotId) return;
+  const slot = state.match.lobby.slots.find((candidate) => candidate.id === robotId);
+  if (slot) {
+    slot.claimedBy = null;
+    slot.initials = '--';
+    slot.ready = false;
+  }
+  inputs.delete(robotId);
+  assignments.delete(socket);
+};
+
 webSocketServer.on('connection', (socket) => {
   clients.add(socket);
-  if (!hostSocket) hostSocket = socket;
+  if (!hostSocket || hostSocket.readyState !== WebSocket.OPEN) hostSocket = socket;
   send(socket, { type: ServerMessageType.STATE, matchId: 'rebuilt-practice-01', state });
 
   socket.on('message', (raw) => {
@@ -133,7 +150,7 @@ webSocketServer.on('connection', (socket) => {
 
     if (message.type === ClientMessageType.JOIN) {
       const requested = message.robotId;
-      const assigned = requested && state.robots.some((robot) => robot.id === requested)
+      const assigned = requested && state.robots.some((robot) => robot.id === requested) && ![...assignments.values()].includes(requested)
         ? requested
         : state.robots.find((robot) => ![...assignments.values()].includes(robot.id))?.id;
       if (!assigned) {
@@ -148,6 +165,7 @@ webSocketServer.on('connection', (socket) => {
         slot.initials = message.clientId.slice(0, 2).toUpperCase();
       }
       send(socket, { type: ServerMessageType.JOIN_CONFIRMED, robotId: assigned, initialState: state });
+      broadcastState();
       return;
     }
 
@@ -157,27 +175,56 @@ webSocketServer.on('connection', (socket) => {
         sendError(socket, 'That robot slot is already claimed');
         return;
       }
+      const previousRobotId = assignments.get(socket);
+      if (previousRobotId && previousRobotId !== slot.id) {
+        const previousSlot = state.match.lobby.slots.find((candidate) => candidate.id === previousRobotId);
+        if (previousSlot) {
+          previousSlot.claimedBy = null;
+          previousSlot.initials = '--';
+          previousSlot.ready = false;
+        }
+        inputs.delete(previousRobotId);
+      }
       slot.claimedBy = message.clientId;
       slot.initials = message.initials;
       assignments.set(socket, slot.id);
-      send(socket, { type: ServerMessageType.STATE, matchId: 'rebuilt-practice-01', state });
+      broadcastState();
       return;
     }
 
     if (message.type === ClientMessageType.LOBBY_READY) {
-      const slot = state.match.lobby.slots.find((candidate) => candidate.id === message.robotId && candidate.claimedBy === message.clientId);
-      if (slot) slot.ready = message.ready;
+      const assigned = assignments.get(socket);
+      const slot = state.match.lobby.slots.find((candidate) => candidate.id === assigned && candidate.id === message.robotId && candidate.claimedBy === message.clientId);
+      if (!slot) {
+        sendError(socket, 'Robot is not assigned to this connection');
+        return;
+      }
+      slot.ready = message.ready;
+      broadcastState();
       return;
     }
 
     if (message.type === ClientMessageType.START_MATCH) {
+      if (socket !== hostSocket) {
+        sendError(socket, 'Only the host can start the match');
+        return;
+      }
       const claimed = state.match.lobby.slots.filter((slot) => slot.claimedBy);
-      if (socket !== hostSocket || claimed.length === 0 || claimed.some((slot) => !slot.ready)) {
-        sendError(socket, 'The host can start after every claimed slot is ready');
+      const assigned = assignments.get(socket);
+      const ownSlot = state.match.lobby.slots.find((slot) => slot.id === assigned && slot.claimedBy === message.clientId);
+      if (ownSlot) ownSlot.ready = true;
+      if (claimed.length === 0 || claimed.some((slot) => !slot.ready)) {
+        sendError(socket, 'Every claimed slot must be ready before the match starts');
         return;
       }
       state.match.started = true;
       state.isRunning = true;
+      broadcastState();
+      return;
+    }
+
+    if (message.type === ClientMessageType.LEAVE) {
+      releaseAssignment(socket);
       broadcastState();
       return;
     }
@@ -194,13 +241,10 @@ webSocketServer.on('connection', (socket) => {
   });
 
   socket.on('close', () => {
-    const robotId = assignments.get(socket);
-    if (robotId) {
-      inputs.delete(robotId);
-      assignments.delete(socket);
-    }
+    releaseAssignment(socket);
     clients.delete(socket);
     if (hostSocket === socket) hostSocket = clients.values().next().value ?? null;
+    broadcastState();
   });
 });
 

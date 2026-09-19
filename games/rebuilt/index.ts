@@ -146,13 +146,27 @@ export const updateState = (
   if (!state.match.started) return state;
   // Update physics for all robots
   const newRobots = state.robots.map(robot => {
-    const input = inputs.get(robot.id) || { thrust: 0, turn: 0, intake: false, outtake: false, mechanism: false };
+    const input = inputs.get(robot.id) || defaultInput;
+    if (input.reset) return respawnRobot(robot);
     return updateRobotPhysics(robot, input, getRobotStats(robot.id), dt, state.field);
   });
 
   resolveRobotCollisions(newRobots);
+  const resetRobotIds = new Set(
+    state.robots.filter((robot) => inputs.get(robot.id)?.reset).map((robot) => robot.id),
+  );
 
   const newGamePieces: GamePieceState[] = state.gamePieces.map((piece): GamePieceState => {
+    if (piece.carrier && resetRobotIds.has(piece.carrier)) {
+      const robot = newRobots.find((candidate) => candidate.id === piece.carrier);
+      return {
+        ...piece,
+        state: 'free',
+        carrier: null,
+        position: robot?.position ?? piece.position,
+        velocity: { x: 0, y: 0 },
+      };
+    }
     if (piece.state === 'flying' && piece.target && piece.flightSecondsRemaining !== undefined) {
       const remaining = piece.flightSecondsRemaining - dt;
       if (remaining > 0) {
@@ -258,11 +272,29 @@ export const updateState = (
 };
 
 const defaultInput: RobotInput = {
+  driveX: 0,
+  driveY: 0,
   thrust: 0,
   turn: 0,
-  intake: false,
+  intake: true,
   outtake: false,
   mechanism: false,
+};
+
+const respawnRobot = (robot: RobotState): RobotState => {
+  const index = Number(robot.id.slice(1)) - 1;
+  const isRed = robot.team === '610';
+  return {
+    ...robot,
+    position: {
+      x: isRed ? 1.4 : FIELD_WIDTH - 1.4,
+      y: 1.8 + Math.max(0, Math.min(2, index)) * 2.2,
+    },
+    velocity: { x: 0, y: 0 },
+    angularVelocity: 0,
+    heading: isRed ? 0 : Math.PI,
+    carriedCount: 0,
+  };
 };
 
 const recycleFromHub = (piece: GamePieceState): GamePieceState => {

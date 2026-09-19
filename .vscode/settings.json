@@ -3,6 +3,10 @@
         "/^node -e \"const WebSocket=require\\('ws'\\); const ws=new WebSocket\\('ws://127\\.0\\.0\\.1:8080/ws'\\); let seen=0; ws\\.on\\('open',\\(\\)=>ws\\.send\\(JSON\\.stringify\\(\\{type:'join',clientId:'physics-smoke',robotId:'610-primary'\\}\\)\\)\\); ws\\.on\\('message',d=>\\{const m=JSON\\.parse\\(d\\); if\\(m\\.type==='state'\\)\\{console\\.log\\('state',m\\.state\\.gamePieces\\.length,m\\.state\\.gamePieces\\[0\\]\\.radius\\); seen\\+\\+;\\} if\\(m\\.type==='joinConfirmed'\\)\\{console\\.log\\('joined',m\\.robotId\\); setTimeout\\(\\(\\)=>\\{ws\\.close\\(\\); if\\(!seen\\) process\\.exit\\(1\\);\\},100\\)\\} \\}\\); ws\\.on\\('error',e=>\\{console\\.error\\(e\\.message\\); process\\.exit\\(1\\)\\}\\); setTimeout\\(\\(\\)=>process\\.exit\\(2\\),3000\\)\"$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^node -e \"const WebSocket=require\\('ws'\\); const ws=new WebSocket\\('ws://127\\.0\\.0\\.1:8080/ws'\\); let n=0; ws\\.on\\('open',\\(\\)=>ws\\.send\\(JSON\\.stringify\\(\\{type:'join',clientId:'debug-physics',robotId:'R1'\\}\\)\\)\\); ws\\.on\\('message',d=>\\{const m=JSON\\.parse\\(d\\); console\\.log\\(m\\.type,m\\.message\\|\\|m\\.state\\?\\.match\\?\\.started,m\\.state\\?\\.robots\\?\\.\\[0\\]\\?\\.position\\); if\\(m\\.type==='joinConfirmed'\\)\\{ws\\.send\\(JSON\\.stringify\\(\\{type:'lobbyReady',clientId:'debug-physics',robotId:'R1',ready:true\\}\\)\\); setTimeout\\(\\(\\)=>ws\\.send\\(JSON\\.stringify\\(\\{type:'startMatch',clientId:'debug-physics'\\}\\)\\),100\\)\\} if\\(m\\.type==='state'&&m\\.state\\?\\.match\\?\\.started&&n\\+\\+<2\\)\\{ws\\.send\\(JSON\\.stringify\\(\\{type:'input',clientId:'debug-physics',robotId:'R1',input:\\{driveX:1,driveY:0,turn:0,intake:true\\},timestamp:Date\\.now\\(\\)\\}\\)\\);\\}\\}\\); setTimeout\\(\\(\\)=>process\\.exit\\(0\\),1200\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

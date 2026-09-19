@@ -7,9 +7,11 @@ import { RobotInput, SimulationState } from '@/simulator/simulation/simulationSt
 import { ServerMessageType } from '@/simulator/networking/protocol';
 
 const emptyInput: RobotInput = {
+  driveX: 0,
+  driveY: 0,
   thrust: 0,
   turn: 0,
-  intake: false,
+  intake: true,
   outtake: false,
   mechanism: false,
   shoot: false,
@@ -44,12 +46,15 @@ export default function Home() {
     };
     socket.onmessage = (event) => {
       try {
-        const message = JSON.parse(event.data) as { type: string; state?: SimulationState };
+        const message = JSON.parse(event.data) as { type: string; state?: SimulationState; robotId?: string };
         if (message.type === ServerMessageType.STATE && message.state) {
           setAuthoritative(true);
           setState(message.state);
         }
-        if (message.type === ServerMessageType.JOIN_CONFIRMED) setAuthoritative(true);
+        if (message.type === ServerMessageType.JOIN_CONFIRMED) {
+          setAuthoritative(true);
+          if (message.robotId) setRobotId(message.robotId);
+        }
       } catch {
         setAuthoritative(false);
       }
@@ -82,27 +87,29 @@ export default function Home() {
     const keyMap: Record<string, string> = {
       KeyW: 'forward',
       KeyS: 'reverse',
-      KeyA: 'left',
-      KeyD: 'right',
+      KeyA: 'strafeLeft',
+      KeyD: 'strafeRight',
       ArrowUp: 'forward',
       ArrowDown: 'reverse',
-      ArrowLeft: 'left',
-      ArrowRight: 'right',
+      ArrowLeft: 'turnLeft',
+      ArrowRight: 'turnRight',
       KeyI: 'intake',
       ShiftLeft: 'outtake',
       ShiftRight: 'outtake',
       Space: 'shoot',
       KeyV: 'cornerPass',
-      KeyJ: 'left',
-      KeyL: 'right',
+      KeyJ: 'turnLeft',
+      KeyL: 'turnRight',
       KeyC: 'climb',
       Enter: 'reset',
     };
     const updateInput = () => setInput({
       ...emptyInput,
+      driveX: pressed.has('strafeLeft') ? -1 : pressed.has('strafeRight') ? 1 : 0,
+      driveY: pressed.has('forward') ? 1 : pressed.has('reverse') ? -1 : 0,
       thrust: pressed.has('forward') ? 1 : pressed.has('reverse') ? -1 : 0,
-      turn: pressed.has('left') ? -1 : pressed.has('right') ? 1 : 0,
-      intake: pressed.has('intake'),
+      turn: pressed.has('turnLeft') ? -1 : pressed.has('turnRight') ? 1 : 0,
+      intake: true,
       outtake: pressed.has('outtake'),
       mechanism: pressed.has('mechanism'),
       shoot: pressed.has('shoot'),
@@ -159,6 +166,10 @@ export default function Home() {
     if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify(message));
   };
 
+  const selectedSlot = state.match.lobby.slots.find((slot) => slot.id === robotId);
+  const isReady = selectedSlot?.claimedBy === clientId && selectedSlot.ready;
+  const canStart = state.match.lobby.slots.some((slot) => slot.claimedBy) && state.match.lobby.slots.filter((slot) => slot.claimedBy).every((slot) => slot.ready);
+
   if (!state.match.started) {
     return (
       <main className="simulator-shell">
@@ -179,8 +190,8 @@ export default function Home() {
             <div className="lobby-stat"><span>ROBOT CLASS</span><b>STANDARD FRC</b></div>
             <div className="lobby-stat"><span>DRIVE / ROTATION</span><b>4.0 m/s / 2.0 rad/s</b></div>
             <div className="lobby-stat"><span>CAPACITY / HEIGHT</span><b>1 FUEL / TRENCH READY</b></div>
-            <button className="lobby-ready" onClick={() => sendLobby({ type: 'lobbyReady', clientId, robotId, ready: true })}>READY UP</button>
-            <button className="lobby-start" onClick={() => sendLobby({ type: 'startMatch', clientId })}>START MATCH</button>
+            <button className="lobby-ready" disabled={!selectedSlot || selectedSlot.claimedBy !== clientId} onClick={() => sendLobby({ type: 'lobbyReady', clientId, robotId, ready: !isReady })}>{isReady ? 'UNREADY' : 'READY UP'}</button>
+            <button className="lobby-start" disabled={!canStart} onClick={() => sendLobby({ type: 'startMatch', clientId })}>START MATCH</button>
           </div>
         </section>
         <footer className="simulator-footer"><span>6 ROBOT SLOTS / LATE JOINERS SPECTATE</span><span>SERVER AUTHORITATIVE</span></footer>
@@ -221,7 +232,7 @@ export default function Home() {
       </section>
       <section className="controls-panel" aria-label="Keyboard controls">
         <div className="control-group"><span>DRIVE</span><div className="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div></div>
-        <div className="control-group"><span>ROTATE</span><div className="keys"><kbd>←</kbd><kbd>→</kbd></div></div>
+        <div className="control-group"><span>SWERVE</span><div className="keys"><kbd>J</kbd><kbd>L</kbd><kbd>←</kbd><kbd>→</kbd></div></div>
         <div className="control-group"><span>INTAKE</span><kbd>I</kbd></div>
         <div className="control-group"><span>SHOOT</span><kbd>SPACE</kbd></div>
         <div className="control-group"><span>CORNER PASS</span><kbd>V</kbd></div>

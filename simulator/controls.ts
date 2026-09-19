@@ -24,6 +24,8 @@ import { RobotInput } from './simulation/simulationState';
  * Note: REBUILT-specific control mappings are handled in the game module.
  */
 export interface GenericRobotInput {
+  driveX: number;
+  driveY: number;
   /** Forward/backward thrust (-1 to 1)
    *  -1 = full reverse, 0 = stopped, 1 = full forward */
   thrust: number;
@@ -56,6 +58,8 @@ export interface GenericRobotInput {
  * the game module provides the mapping to REBUILT-specific behaviors.
  */
 export const mapGenericInput = (generic: GenericRobotInput): RobotInput => ({
+  driveX: generic.driveX,
+  driveY: generic.driveY,
   thrust: generic.thrust,
   turn: generic.turn,
   intake: generic.intake,
@@ -81,30 +85,30 @@ export const mapGenericInput = (generic: GenericRobotInput): RobotInput => ({
  */
 export const keyboardMapping: Record<string, keyof GenericRobotInput> = {
   // Thrust (forward)
-  'KeyW': 'thrust',
-  'ArrowUp': 'thrust',
+  'KeyW': 'driveY',
+  'ArrowUp': 'driveY',
   
   // Thrust (backward) 
-  'KeyS': 'thrust',
-  'ArrowDown': 'thrust',
+  'KeyS': 'driveY',
+  'ArrowDown': 'driveY',
   
   // Turn (left)
-  'KeyA': 'turn',
+  'KeyA': 'driveX',
   'ArrowLeft': 'turn',
   
   // Turn (right)
-  'KeyD': 'turn',
+  'KeyD': 'driveX',
   'ArrowRight': 'turn',
   
   // Intake
-  'Space': 'intake',
+  'Space': 'shoot',
   
   // Outtake
   'ShiftLeft': 'outtake',
   'ShiftRight': 'outtake',
   
   // Mechanism
-  'KeyV': 'mechanism',
+  'KeyV': 'cornerPass',
   'KeyJ': 'turn',
   'KeyL': 'turn',
   'KeyC': 'climb',
@@ -119,6 +123,8 @@ export const keyboardMapping: Record<string, keyof GenericRobotInput> = {
  */
 export const processKeyDown = (event: KeyboardEvent): Partial<GenericRobotInput> => {
   const input: Partial<GenericRobotInput> = {
+    driveX: 0,
+    driveY: 0,
     thrust: 0,
     turn: 0,
     intake: false,
@@ -130,21 +136,23 @@ export const processKeyDown = (event: KeyboardEvent): Partial<GenericRobotInput>
   if (!keyMapping) return input;
   
   // Handle dual-purpose keys (thrust can be forward or backward)
-  if (keyMapping === 'thrust') {
-    // Check if it's forward or backward based on the specific key
-    const isForward = event.code === 'KeyW' || event.code === 'ArrowUp';
-    // In a real implementation, we'd need to track state to allow
-    // both forward and backward simultaneously, but for simplicity:
-    input.thrust = isForward ? 1 : -1;
+  if (keyMapping === 'driveY') {
+    input.driveY = event.code === 'KeyW' || event.code === 'ArrowUp' ? 1 : -1;
+  } else if (keyMapping === 'driveX') {
+    input.driveX = event.code === 'KeyD' ? 1 : -1;
   } else if (keyMapping === 'turn') {
-    const isLeft = event.code === 'KeyA' || event.code === 'ArrowLeft';
+    const isLeft = event.code === 'KeyJ' || event.code === 'ArrowLeft';
     input.turn = isLeft ? -1 : 1;
-  } else if (keyMapping === 'intake') {
-    input.intake = true;
   } else if (keyMapping === 'outtake') {
     input.outtake = true;
-  } else if (keyMapping === 'mechanism') {
-    input.mechanism = true;
+  } else if (keyMapping === 'shoot') {
+    input.shoot = true;
+  } else if (keyMapping === 'cornerPass') {
+    input.cornerPass = true;
+  } else if (keyMapping === 'climb') {
+    input.climb = true;
+  } else if (keyMapping === 'reset') {
+    input.reset = true;
   }
   
   return input;
@@ -162,6 +170,8 @@ export const processKeyUp = (event: KeyboardEvent): Partial<GenericRobotInput> =
   if (!keyMapping) return {};
   
   const input: Partial<GenericRobotInput> = {
+    driveX: 0,
+    driveY: 0,
     thrust: 0,
     turn: 0,
     intake: false,
@@ -170,7 +180,7 @@ export const processKeyUp = (event: KeyboardEvent): Partial<GenericRobotInput> =
   };
   
   // If the released key was controlling thrust or turn, zero it out
-  if (keyMapping === 'thrust' || keyMapping === 'turn') {
+  if (keyMapping === 'driveX' || keyMapping === 'driveY' || keyMapping === 'turn') {
     // Check if the other direction key is still pressed
     // This is simplified - a full implementation would track key state
     input.thrust = 0;

@@ -27,25 +27,28 @@ export const updateRobotPhysics = (
 ): RobotState => {
   const { position, velocity, heading, angularVelocity } = robot;
 
-  // Apply turning
-  const angularAcceleration = input.turn * stats.turnRate;
-  const newAngularVelocity = angularVelocity + angularAcceleration * dt;
+  // Turn toward the commanded angular velocity, including braking when released.
+  const targetAngularVelocity = Math.max(-stats.turnRate, Math.min(stats.turnRate, input.turn * stats.turnRate));
+  const angularAcceleration = stats.turnRate * 4;
+  const angularDelta = targetAngularVelocity - angularVelocity;
+  const newAngularVelocity = angularVelocity + Math.max(-angularAcceleration * dt, Math.min(angularAcceleration * dt, angularDelta));
   const newHeading = heading + newAngularVelocity * dt;
 
-  // Calculate forward direction based on heading
-  // 0 radians = right, PI/2 = down (canvas coordinates)
+  const driveX = input.driveX ?? 0;
+  const driveY = input.driveY ?? input.thrust;
   const cosH = Math.cos(newHeading);
   const sinH = Math.sin(newHeading);
 
-  // Apply thrust (acceleration)
-  const thrustForce = input.thrust * stats.acceleration;
+  // Convert local swerve axes into world acceleration.
+  const forwardForce = driveY * stats.acceleration;
+  const strafeForce = driveX * stats.acceleration;
   const accelerationVector = {
-    x: cosH * thrustForce,
-    y: sinH * thrustForce,
+    x: cosH * forwardForce - sinH * strafeForce,
+    y: sinH * forwardForce + cosH * strafeForce,
   };
 
   // Apply friction/damping
-  const friction = input.thrust === 0 ? stats.braking : stats.friction;
+  const friction = driveX === 0 && driveY === 0 ? stats.braking : stats.friction;
   const velocityAfterFriction = {
     x: velocity.x * Math.max(0, 1 - friction * dt),
     y: velocity.y * Math.max(0, 1 - friction * dt),
@@ -72,8 +75,10 @@ export const updateRobotPhysics = (
     y: position.y + finalVelocity.y * dt,
   };
 
-  // Keep robot within field boundaries
-  const clampedPosition = clampToField(newPosition, stats, field);
+  // Keep the rotated robot footprint within the field and stop motion into a wall.
+  const { position: clampedPosition, hitX, hitY } = clampToField(newPosition, stats, field, newHeading);
+  if (hitX) finalVelocity.x = 0;
+  if (hitY) finalVelocity.y = 0;
 
   return {
     ...robot,
@@ -91,29 +96,23 @@ export const updateRobotPhysics = (
 const clampToField = (
   position: Vector2,
   stats: RobotStats,
-  field: FieldState
-): Vector2 => {
+  field: FieldState,
+  heading: number,
+): { position: Vector2; hitX: boolean; hitY: boolean } => {
   const { width: robotWidth, length: robotLength } = stats;
-  const halfWidth = robotWidth / 2;
-  const halfLength = robotLength / 2;
+  const cosHeading = Math.abs(Math.cos(heading));
+  const sinHeading = Math.abs(Math.sin(heading));
+  const halfWidth = (cosHeading * robotWidth + sinHeading * robotLength) / 2;
+  const halfLength = (sinHeading * robotWidth + cosHeading * robotLength) / 2;
 
-  const left = field.left + halfWidth;
-  const right = field.right - halfWidth;
-  const top = field.top + halfLength;
-  const bottom = field.bottom - halfLength;
+  const x = Math.max(field.left + halfWidth, Math.min(field.right - halfWidth, position.x));
+  const y = Math.max(field.top + halfLength, Math.min(field.bottom - halfLength, position.y));
 
-  let x = position.x;
-  let y = position.y;
-
-  // Clamp x
-  if (x - halfWidth < field.left) x = field.left + halfWidth;
-  if (x + halfWidth > field.right) x = field.right - halfWidth;
-
-  // Clamp y
-  if (y - halfLength < field.top) y = field.top + halfLength;
-  if (y + halfLength > field.bottom) y = field.bottom - halfLength;
-
-  return { x, y };
+  return {
+    position: { x, y },
+    hitX: x !== position.x,
+    hitY: y !== position.y,
+  };
 };
 
 /**
@@ -133,7 +132,7 @@ export const simulationTick = (
 
   // Update each robot
   state.robots.forEach(robot => {
-    const input = robot.controlledBy === 'human' ? { thrust: 0, turn: 0, intake: false, outtake: false, mechanism: false } : { thrust: 0, turn: 0, intake: false, outtake: false, mechanism: false };
+    const input = { driveX: 0, driveY: 0, thrust: 0, turn: 0, intake: true, outtake: false, mechanism: false };
     
     // Find the first non-zero input for AI-controlled robots
     // In a real implementation, this would come from the network/input system

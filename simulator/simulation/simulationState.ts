@@ -106,11 +106,16 @@ export interface FieldState {
 
 /** Input state sent from client to server */
 export interface RobotInput {
+  /** Local strafe input: A=-1, D=1. */
+  driveX?: number;
+  /** Local forward input: S=-1, W=1. */
+  driveY?: number;
   /** Forward/backward thrust (-1 to 1) */
   thrust: number;
   /** Turning rate (-1 to 1, negative = left) */
   turn: number;
   /** Intake action (true/false) */
+  /** REBUILT intake is always active. */
   intake: boolean;
   /** Outtake action (true/false) */
   outtake: boolean;
