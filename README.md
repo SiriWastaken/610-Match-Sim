@@ -1,36 +1,44 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 610 Match Sim
 
-## Getting Started
+TypeScript and Next.js match simulator for FRC Team 610. The browser renders the match, while the WebSocket server owns robot movement, game pieces, and match state.
 
-First, run the development server:
+## Local development
+
+```bash
+npm install
+npm run server
+```
+
+In a second terminal:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`. The browser connects to `ws://localhost:8080/ws` by default. Copy `.env.example` to `.env.local` to override the endpoint.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Public deployment
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Run the Next app and the simulator server as separate long-running processes. The simulator server binds to `0.0.0.0` and accepts the port from `SIM_SERVER_PORT`:
 
-## Learn More
+```bash
+npm run build
+npm run start
+npm run server
+```
 
-To learn more about Next.js, take a look at the following resources:
+Expose the server through a public TLS reverse proxy at `/ws` and set:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+NEXT_PUBLIC_SIM_SERVER_URL=wss://sim.example.com/ws
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The WebSocket server is authoritative. Clients send validated input messages; the server runs a fixed 60 Hz tick and broadcasts state snapshots. Disconnecting a client releases its robot without stopping the match.
 
-## Deploy on Vercel
+## Checks
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npx tsc --noEmit
+npm run lint
+npm run build
+```
